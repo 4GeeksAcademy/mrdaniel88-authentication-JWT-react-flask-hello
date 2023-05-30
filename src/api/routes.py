@@ -2,10 +2,10 @@
 This module takes care of starting the API Server, Loading the DB and Adding the endpoints
 """
 from flask import Flask, request, jsonify, url_for, Blueprint
-from api.models import db, User
+from api.models import db, User, TokenBlockedList
 from api.utils import generate_sitemap, APIException
 from flask_bcrypt import Bcrypt
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity, get_jwt
 
 api = Blueprint('api', __name__)
 app=Flask(__name__)
@@ -60,3 +60,12 @@ def user_login():
 def hello_protected_get():
     user_id=get_jwt_identity()
     return jsonify({"userId":user_id, "message":"Hello protected route"})
+
+@api.route("/logout", methods=["POST"])
+@jwt_required
+def user_logout():
+    jwt = get_jwt()["jti"]
+    tokenBlocked = TokenBlockedList(jti=jwt)
+    db.session.add(tokenBlocked)
+    db.session.commit()
+    return jsonify({"msg":"Token revoked"})
