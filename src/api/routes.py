@@ -5,11 +5,12 @@ from flask import Flask, request, jsonify, url_for, Blueprint
 from api.models import db, User, TokenBlockedList
 from api.utils import generate_sitemap, APIException
 from flask_bcrypt import Bcrypt
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity, get_jwt
+from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, get_jwt, get_jti
 
 api = Blueprint('api', __name__)
-app=Flask(__name__)
-bcrypt=Bcrypt(app)
+app = Flask(__name__)
+bcrypt = Bcrypt(app)
+
 
 @api.route('/hello', methods=['POST', 'GET'])
 def handle_hello():
@@ -20,6 +21,7 @@ def handle_hello():
 
     return jsonify(response_body), 200
 
+
 @api.route("/signup", methods=["POST"])
 def user_creato():
     data = request.get_json()
@@ -28,44 +30,75 @@ def user_creato():
     if (new_user is not None):
         return jsonify(
             {
-                "msg":"Email registrado"
+                "msg": "Email registrado"
             }
-        ),400
-    secure_password=bcrypt.generate_password_hash(data["password"],rounds=None).decode("utf-8")
-    print (new_user is None)
-    new_user = User(email=data["email"], password=secure_password, is_active=True)
+        ), 400
+    secure_password = bcrypt.generate_password_hash(
+        data["password"], rounds=None).decode("utf-8")
+    print(new_user is None)
+    new_user = User(email=data["email"],
+                    password=secure_password, is_active=True)
     db.session.add(new_user)
     db.session.commit()
     return jsonify(new_user.serialize()), 201
+
 
 @api.route("/login", methods=["POST"])
 def user_login():
     user_email = request.json.get("email")
     user_password = request.json.get("password")
-    #Buscar usuario por correo
-    user=User.query.filter_by(email=user_email).first()
+    # Buscar usuario por correo
+    user = User.query.filter_by(email=user_email).first()
     if user is None:
-        return jsonify({"Message":"User not found"}), 401
-    
-    #Verificar la clave
-    if not bcrypt.check_password_hash(user.password,user_password):
-        return jsonify({"message":"Wrong password"}), 401
-    #Generar el token
-    access_token=create_access_token(identity=user.id)
-    #Retornar el token
-    return jsonify({"accessToken":access_token})
+        return jsonify({"Message": "User not found"}), 401
+
+    # Verificar la clave
+    if not bcrypt.check_password_hash(user.password, user_password):
+        return jsonify({"message": "Wrong password"}), 401
+    # Generar el token
+    access_token = create_access_token(identity=user.id)
+    access_jti = get_jti(access_token)
+    refresh_token = create_refresh_token(identity=user.id, additional_claims={
+                                         "accessToken": access_jti})
+    # Retornar el token
+    return jsonify({"accessToken": access_token, "refreshToken": refresh_token})
+
 
 @api.route("/helloprotected", methods=["GET"])
 @jwt_required()
 def hello_protected_get():
-    user_id=get_jwt_identity()
-    return jsonify({"userId":user_id, "message":"Hello protected route"})
+    user_id = get_jwt_identity()
+    return jsonify({"userId": user_id, "message": "Hello protected route"})
+
 
 @api.route("/logout", methods=["POST"])
-@jwt_required
+@jwt_required()
 def user_logout():
     jwt = get_jwt()["jti"]
     tokenBlocked = TokenBlockedList(jti=jwt)
     db.session.add(tokenBlocked)
     db.session.commit()
-    return jsonify({"msg":"Token revoked"})
+    return jsonify({"msg": "Token revoked"})
+
+
+@api.route("/refresh", methods=["POST"])
+@jwt_required(refresh=True)
+def user_refresh():
+    #identificadores de tokens viejos
+    jti_refresh = get_jwt()["jti"]
+    jti_access=get_jwt()["accessToken"]
+    #bloquear token viejos
+    accessRevoked=TokenBlockedList(jti=jti_access)
+    refreshRevoked=TokenBlockedList(jti=jti_refresh)
+    db.session.add(accessRevoked)
+    db.session.add(refreshRevoked)
+    db.session.commit()
+    #Generar nuevos tokens
+    user_id = get_jwt_identity()
+    # Generar el token
+    access_token = create_access_token(identity=user_id)
+    access_jti = get_jti(access_token)
+    refresh_token = create_refresh_token(identity=user_id, additional_claims={
+                                            "accessToken": access_jti})
+    # Retornar el token
+    return jsonify({"accessToken": access_token})
