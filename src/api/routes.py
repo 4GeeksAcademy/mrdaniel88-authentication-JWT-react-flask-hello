@@ -1,6 +1,7 @@
 """
 This module takes care of starting the API Server, Loading the DB and Adding the endpoints
 """
+from datetime import timedelta
 from flask import Flask, request, jsonify, url_for, Blueprint
 from api.models import db, User, TokenBlockedList
 from api.utils import generate_sitemap, APIException
@@ -62,6 +63,29 @@ def user_login():
                                          "accessToken": access_jti})
     # Retornar el token
     return jsonify({"accessToken": access_token, "refreshToken": refresh_token})
+
+@api.route("/changepassword", methods=["POST"])
+@jwt_required()
+def change_password():
+    new_password=request.json.get("password")
+    user_id=get_jwt_identity()
+    secure_password = bcrypt.generate_password_hash(new_password, rounds=None).decode("utf-8")
+    user=User.query.get(user_id)
+    user.password=secure_password
+    db.session.add(user)
+    db.session.commit()
+    return jsonify({"msg":"Clave actualizada"})
+
+@api.route("/recoverypassword", methods=["POST"])
+def recovery_password():
+    user_email=request.json.get("email")
+    user=User.query.filter_by(email=user_email).first()
+    if user is None:
+        return jsonify({"Message": "User not found"}), 401
+    # Generar el token temporal para el cambio de clave
+    access_token = create_access_token(identity=user.id, additional_claims={"type":"password"})
+    return jsonify({"recoveryToken":access_token})
+    # Enviar enlace con el token via email para el cambio de clave
 
 
 @api.route("/helloprotected", methods=["GET"])
